@@ -89,7 +89,9 @@ end
 
 --- Full rebuild of the buffer from the in-memory tree. Discards any
 --- unsaved edits in the buffer. Only used for the initial open and for a
---- post-save / manual refresh, where that is exactly what we want.
+--- post-save / manual / automatic refresh, where that is exactly what we
+--- want. Returns the nodes in the order they were rendered, so the caller
+--- can map a path back to its new line.
 function M.full(st)
   local bufnr = st.bufnr
   local lines = {}
@@ -107,7 +109,20 @@ function M.full(st)
   walk(st.root.children or {})
 
   vim.bo[bufnr].modifiable = true
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  -- Replacing every line would otherwise leave an undoable state whose text
+  -- no longer matches any of the extmarks we're about to place, so a stray
+  -- `u` after a refresh would resurrect lines the tree no longer knows
+  -- about. 'undolevels' = -1 across the change is the standard way to keep
+  -- it out of the undo history (-123456 means "no local value", so
+  -- round-tripping the local scope restores whatever was there).
+  local undolevels = vim.api.nvim_get_option_value("undolevels", { buf = bufnr, scope = "local" })
+  vim.api.nvim_set_option_value("undolevels", -1, { buf = bufnr, scope = "local" })
+  local ok, err = pcall(vim.api.nvim_buf_set_lines, bufnr, 0, -1, false, lines)
+  vim.api.nvim_set_option_value("undolevels", undolevels, { buf = bufnr, scope = "local" })
+  if not ok then
+    error(err)
+  end
+
   vim.api.nvim_buf_clear_namespace(bufnr, st.ns, 0, -1)
   st.mark_to_node = {}
 
@@ -116,6 +131,7 @@ function M.full(st)
   end
 
   vim.bo[bufnr].modified = false
+  return order
 end
 
 --- Insert freshly-loaded `node.children` as new lines directly below

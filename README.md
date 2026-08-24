@@ -56,7 +56,7 @@ used side by side:
 | `-`           | Jump to parent line, or go up (see below)                     |
 | `x`           | Cut (queue for move) - works on a visual line range too      |
 | `p`           | Paste: move cut item(s) into the directory under the cursor  |
-| `R`           | Refresh from disk (asks first if you have unsaved edits)     |
+| `R`           | Refresh from disk (asks first if you have unsaved edits) - rarely needed, see auto-refresh |
 | `g?`          | Help                                                          |
 | `q`           | Close (float/sidebar: closes the window; default: back to your previous buffer) |
 | `<C-c>`/`<Esc>` | Quick-dismiss, **float only** - a sidebar is meant to stay put (nvim-tree-style), so these don't close it; use `q` or toggle it again |
@@ -77,6 +77,24 @@ Directories start collapsed; expand on demand with `l`/`<CR>`. Set
 `expand_all = true` to open with every directory already expanded instead.
 Either way, only expanded directories are ever touched by save - if you
 haven't looked inside a directory, neiltree won't touch it.
+
+## Staying in sync with disk
+
+The tree keeps itself up to date: every directory it currently shows is
+watched, so a file created, renamed or deleted by anything else - another
+Neovim, a `git checkout`, a build, a shell in another window - appears (or
+disappears) in the buffer on its own, with your cursor left on the same
+entry it was on. As a backstop for filesystems that have no change
+notifications (network mounts, `/mnt/...` under WSL) it also rescans when
+you enter the tree buffer, when Neovim regains focus, and after `:!cmd` or
+leaving a `:terminal`.
+
+An automatic refresh rebuilds every line, so it never runs while that
+would throw work away: if the buffer has unsaved edits it warns once and
+holds off (save, or press `R`, and it catches up), and it waits until
+you're back in normal mode rather than yanking lines around mid-edit.
+
+Set `auto_refresh = false` in `setup()` for the old manual-only behavior.
 
 ## Editing rules
 

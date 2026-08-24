@@ -5,9 +5,8 @@ local config = require("neiltree.config")
 
 local M = {}
 
---- Resolve the node (if any) whose line the cursor is currently on.
-function M.node_at_cursor(st)
-  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+--- Resolve the node (if any) rendered on buffer line `row` (0-indexed).
+function M.node_at_row(st, row)
   local marks = vim.api.nvim_buf_get_extmarks(st.bufnr, st.ns, { row, 0 }, { row, -1 }, {})
   for _, m in ipairs(marks) do
     local node = st.mark_to_node[m[1]]
@@ -16,6 +15,11 @@ function M.node_at_cursor(st)
     end
   end
   return nil
+end
+
+--- Resolve the node (if any) whose line the cursor is currently on.
+function M.node_at_cursor(st)
+  return M.node_at_row(st, vim.api.nvim_win_get_cursor(0)[1] - 1)
 end
 
 --- Every node whose line falls within buffer rows [row0, row1] (0-indexed,
@@ -44,6 +48,7 @@ function M.expand(st, node)
   if #node.children > 0 then
     render.insert_children(st, node)
   end
+  require("neiltree.watch").sync(st)
 end
 
 function M.collapse(st, node)
@@ -53,6 +58,7 @@ function M.collapse(st, node)
   render.remove_descendants(st, node)
   node.expanded = false
   render.update_decoration(st, node)
+  require("neiltree.watch").sync(st)
 end
 
 function M.toggle(st, node)

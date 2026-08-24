@@ -9,6 +9,11 @@ M.defaults = {
   icons = true,
   -- ask for confirmation before applying create/delete/move to disk
   confirm_changes = true,
+  -- keep the tree in sync with disk on its own: watch every rendered
+  -- directory for changes, and rescan when you enter the buffer or return
+  -- to Neovim. Never touches a buffer with unsaved edits (it would have to
+  -- discard them) - that case still waits for `:w` or the refresh keymap.
+  auto_refresh = true,
   -- fixed width of the `sidebar = true` / `--sidebar` window
   sidebar_width = 30,
   -- which side the sidebar opens on: "left" or "right"

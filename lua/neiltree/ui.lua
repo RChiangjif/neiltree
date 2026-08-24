@@ -6,6 +6,7 @@ local actions = require("neiltree.actions")
 local diff = require("neiltree.diff")
 local apply = require("neiltree.apply")
 local util = require("neiltree.util")
+local watch = require("neiltree.watch")
 
 local M = {}
 
@@ -119,9 +120,48 @@ function M.confirm_and_resync(st)
   return true
 end
 
+--- Remember, for every window showing `st`'s buffer, its view and the path
+--- of the entry the cursor is parked on - `restore_views` puts the cursor
+--- back on that same entry after the rebuild, even if it has moved to a
+--- different line (or, if it's gone from disk, leaves the cursor where it
+--- was). Must run before `render.full` clears `st.mark_to_node`.
+local function save_views(st)
+  local saved = {}
+  for _, win in ipairs(vim.fn.win_findbuf(st.bufnr)) do
+    local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+    local node = actions.node_at_row(st, view.lnum - 1)
+    saved[win] = { view = view, path = node and node.path }
+  end
+  return saved
+end
+
+local function restore_views(st, saved, order)
+  local row_of_path = {}
+  for row, node in ipairs(order) do
+    row_of_path[node.path] = row
+  end
+  for win, entry in pairs(saved) do
+    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == st.bufnr then
+      local view = entry.view
+      local new_lnum = entry.path and row_of_path[entry.path]
+      if new_lnum and new_lnum ~= view.lnum then
+        -- Scroll by the same amount the line moved, so an entry sitting
+        -- mid-window stays put on screen instead of jumping to the top.
+        view.topline = math.max(1, view.topline + (new_lnum - view.lnum))
+        view.lnum = new_lnum
+      end
+      vim.api.nvim_win_call(win, function()
+        vim.fn.winrestview(view)
+      end)
+    end
+  end
+end
+
 function M.resync(st)
   local expanded_paths = {}
   collect_expanded_paths(st.root, expanded_paths)
+
+  local saved = save_views(st)
 
   st.root = tree.new_root(st.root.path)
   tree.load_children(st.root)
@@ -137,7 +177,43 @@ function M.resync(st)
   end
   expand_matching(st.root)
 
-  render.full(st)
+  local order = render.full(st)
+  restore_views(st, saved, order)
+
+  st.stale = false
+  st.stale_notified = false
+  watch.sync(st)
+end
+
+--- Resync because *disk* changed, not because the user asked: triggered by
+--- the directory watchers (watch.lua) and by the catch-up autocmds below.
+--- Unlike `resync` this must never surprise anyone, so it bails out - and
+--- leaves `st.stale` set for the next trigger to retry - whenever
+--- rebuilding the buffer would destroy something: unsaved edits, a
+--- half-finished insert/visual/operator, or an open command-line window
+--- (where editing another buffer isn't even allowed).
+function M.auto_refresh(st)
+  if not st or not config.options.auto_refresh or not vim.api.nvim_buf_is_valid(st.bufnr) then
+    return
+  end
+  if vim.bo[st.bufnr].modified then
+    st.stale = true
+    if not st.stale_notified then
+      st.stale_notified = true
+      vim.notify(
+        ("[neiltree] the directory changed on disk - save, or press %s to refresh"):format(
+          config.options.keymaps.refresh
+        ),
+        vim.log.levels.WARN
+      )
+    end
+    return
+  end
+  if vim.fn.mode() ~= "n" or vim.fn.getcmdwintype() ~= "" then
+    st.stale = true
+    return
+  end
+  M.resync(st)
 end
 
 local function do_save(st)
@@ -310,6 +386,29 @@ local function setup_keymaps(st)
   end, opts)
 end
 
+-- Watchers don't fire everywhere: WSL's /mnt/... and network mounts have no
+-- change notifications at all, and a deeply expanded tree can outrun the
+-- watcher cap. These are the catch-up triggers - the moments a change made
+-- outside this buffer has just plausibly happened - for every neiltree
+-- buffer currently on screen, including a sidebar you weren't focused on.
+local global_group
+local function ensure_global_autocmds()
+  if global_group then
+    return
+  end
+  global_group = vim.api.nvim_create_augroup("neiltree_auto_refresh", { clear = true })
+  vim.api.nvim_create_autocmd({ "FocusGained", "TermLeave", "ShellCmdPost", "DirChanged" }, {
+    group = global_group,
+    callback = function()
+      for bufnr, st in pairs(state.buffers) do
+        if vim.api.nvim_buf_is_valid(bufnr) and #vim.fn.win_findbuf(bufnr) > 0 then
+          M.auto_refresh(st)
+        end
+      end
+    end,
+  })
+end
+
 --- Get (or create) the neiltree buffer rooted at `path`, without touching
 --- any window. Split out of `M.open` so `M.go_up` can swap the *current*
 --- window's buffer directly instead of placing a brand new window the way
@@ -352,6 +451,19 @@ local function get_or_create_buffer(path, opts)
   render.full(st)
 
   setup_keymaps(st)
+  ensure_global_autocmds()
+  watch.sync(st)
+
+  -- Entering the buffer (or coming back to Neovim with the cursor already
+  -- in it) is the other moment to catch up on anything the watchers missed;
+  -- InsertLeave/CursorHold are the retries for a refresh that had to be
+  -- deferred while you were mid-edit.
+  vim.api.nvim_create_autocmd({ "BufEnter", "FocusGained", "InsertLeave", "CursorHold" }, {
+    buffer = bufnr,
+    callback = function()
+      M.auto_refresh(state.get(bufnr))
+    end,
+  })
 
   vim.api.nvim_create_autocmd("BufWriteCmd", {
     buffer = bufnr,
@@ -362,6 +474,10 @@ local function get_or_create_buffer(path, opts)
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = bufnr,
     callback = function()
+      local st_wiped = state.get(bufnr)
+      if st_wiped then
+        watch.detach(st_wiped)
+      end
       state.clear(bufnr)
       for tab, win in pairs(sidebar_wins) do
         if not vim.api.nvim_win_is_valid(win) then
