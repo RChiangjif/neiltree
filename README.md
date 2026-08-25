@@ -116,6 +116,10 @@ Set `auto_refresh = false` in `setup()` for the old manual-only behavior.
 - Depth is one literal tab character per level - `<Tab>` inserts a real
   tab in a neiltree buffer regardless of your global `expandtab`. Mixing
   in spaces for indentation is rejected on save.
+  Because that indent is structure rather than text, insert-mode `<C-w>`
+  and `<C-u>` stop at the end of it instead of swallowing it - erasing a
+  name to retype it can't silently reparent the entry. Dedent
+  deliberately with `<BS>` or `<<`.
 
 ### Why cut/paste is separate
 

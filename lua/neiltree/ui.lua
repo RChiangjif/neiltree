@@ -381,6 +381,28 @@ local function setup_keymaps(st)
     end
   end
 
+  -- Insert-mode <C-w>/<C-u> swallow a whole run of whitespace in one press,
+  -- and the leading tabs on a line here are *structure*, not text (one tab
+  -- per tree level - see render.lua). Clearing a name with a couple of
+  -- <C-w>s therefore used to take the indent with it once the name ran out,
+  -- silently dedenting the entry: it jumps out to the parent directory on
+  -- screen, and `:w` applies that as a move. Stop both at the end of the
+  -- indent, so changing an entry's depth stays a deliberate edit (<BS>,
+  -- <<, ...) instead of a side effect of erasing its name.
+  local function stop_at_indent(key)
+    return function()
+      local line = vim.api.nvim_get_current_line()
+      local indent = #(line:match("^\t*") or "")
+      if vim.fn.col(".") - 1 <= indent then
+        return ""
+      end
+      return key
+    end
+  end
+  for _, lhs in ipairs({ "<C-w>", "<C-u>" }) do
+    vim.keymap.set("i", lhs, stop_at_indent(lhs), { buffer = bufnr, expr = true, silent = true })
+  end
+
   vim.keymap.set("n", km.help, function()
     show_help(st)
   end, opts)
