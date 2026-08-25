@@ -23,4 +23,15 @@ function M.toggle_sidebar(path, opts)
   require("neiltree.ui").toggle_sidebar(path, opts)
 end
 
+--- Toggle the git panel for `path` (default: whatever the sidebar is already
+--- rooted at, else the current file's directory, else cwd) in the same
+--- sidebar slot the file tree uses on this tabpage. Shows the current
+--- branch and its upstream tracking, the working-tree status, and the local
+--- and remote branch lists, all from the plain `git` CLI; select a branch to
+--- switch to it. The tree and the panel share one window - toggling either
+--- swaps the other out, and toggling this one off puts the tree back.
+function M.toggle_git(path, opts)
+  require("neiltree.gitpanel").toggle(path, opts)
+end
+
 return M

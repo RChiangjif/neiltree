@@ -89,13 +89,10 @@ function M.select(st, node)
     end
   elseif st.sidebar then
     -- The sidebar stays open (nvim-tree/nerdtree-style) - move to whatever
-    -- window was active before the sidebar, or split one off if the
-    -- sidebar is the only window there is.
-    local sidebar_win = vim.api.nvim_get_current_win()
-    vim.cmd("wincmd p")
-    if vim.api.nvim_get_current_win() == sidebar_win then
-      vim.cmd("vsplit")
-    end
+    -- window was active before it, or split one off if the sidebar is the
+    -- only window there is. Shared with the git panel's "open this changed
+    -- file", so the two land files the same way.
+    require("neiltree.sidebar").leave_to_edit_win()
   end
   vim.cmd("edit " .. vim.fn.fnameescape(node.path))
 end

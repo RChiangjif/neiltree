@@ -7,14 +7,45 @@ local diff = require("neiltree.diff")
 local apply = require("neiltree.apply")
 local util = require("neiltree.util")
 local watch = require("neiltree.watch")
+local sidebar = require("neiltree.sidebar")
 
 local M = {}
 
-local function set_highlights()
-  local set = vim.api.nvim_set_hl
-  set(0, "NeiltreeDirIcon", { link = "Directory", default = true })
-  set(0, "NeiltreeFileIcon", { link = "Normal", default = true })
-  set(0, "NeiltreeDirName", { link = "Directory", default = true })
+--- Install every highlight group the plugin renders with, as `default`
+--- links so any colorscheme can override them. Public because the git panel
+--- needs them installed too, and re-run from the ColorScheme autocmd below:
+--- `:colorscheme` clears `default = true` links, so without that the tree's
+--- colors silently fell back to Normal until the next `open()`.
+function M.set_highlights()
+  local function link(name, target)
+    vim.api.nvim_set_hl(0, name, { link = target, default = true })
+  end
+
+  link("NeiltreeDirIcon", "Directory")
+  link("NeiltreeFileIcon", "Normal")
+  link("NeiltreeDirName", "Directory")
+
+  -- Git panel. `Added`/`Changed`/`Removed` and `DiagnosticError` are
+  -- foreground-only groups, unlike `DiffAdd`/`DiffChange`/`ErrorMsg`, which
+  -- carry a background in most colorschemes and would paint whole rows.
+  link("NeiltreeGitHead", "Title")
+  link("NeiltreeGitDetached", "WarningMsg")
+  link("NeiltreeGitUpstream", "Comment")
+  link("NeiltreeGitAhead", "Added")
+  link("NeiltreeGitBehind", "Removed")
+  link("NeiltreeGitSection", "Title")
+  link("NeiltreeGitCount", "Comment")
+  link("NeiltreeGitChevron", "Delimiter")
+  link("NeiltreeGitBranch", "Normal")
+  link("NeiltreeGitBranchCurrent", "Special")
+  link("NeiltreeGitRemote", "Constant")
+  link("NeiltreeGitStaged", "Added")
+  link("NeiltreeGitUnstaged", "Changed")
+  link("NeiltreeGitUntracked", "Comment")
+  link("NeiltreeGitDeleted", "Removed")
+  link("NeiltreeGitConflict", "DiagnosticError")
+  link("NeiltreeGitHint", "Comment")
+  link("NeiltreeGitError", "ErrorMsg")
 end
 
 local function buf_name(path)
@@ -52,36 +83,12 @@ local function open_floating(bufnr)
   })
 end
 
---- Open `bufnr` in a fixed-width vertical split pinned to one edge of the
---- tabpage, nerdtree/nvim-tree-style, and set the usual sidebar window
---- options (no numbers/signcolumn, doesn't get squeezed by `wincmd =`).
-local function open_sidebar(bufnr)
-  local side = config.options.sidebar_side == "right" and "botright" or "topleft"
-  vim.cmd(("%s vertical %d split"):format(side, config.options.sidebar_width))
-  local win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(win, bufnr)
-  vim.wo[win].number = false
-  vim.wo[win].relativenumber = false
-  vim.wo[win].signcolumn = "no"
-  vim.wo[win].foldcolumn = "0"
-  vim.wo[win].wrap = false
-  vim.wo[win].spell = false
-  vim.wo[win].list = false
-  vim.wo[win].cursorline = true
-  vim.wo[win].winfixwidth = true
-  return win
-end
-
--- tabpage handle -> sidebar window id, so a second `toggle_sidebar` call
--- (or a second `--sidebar` open) knows to close the existing one instead
--- of stacking another.
-local sidebar_wins = {}
-
 local function place_window(bufnr, opts)
   if opts.sidebar then
-    local win = open_sidebar(bufnr)
-    sidebar_wins[vim.api.nvim_get_current_tabpage()] = win
-    return win
+    -- One window per tabpage holds whichever neiltree view is showing (see
+    -- sidebar.lua) - the tree and the git panel swap in and out of it
+    -- rather than each opening a split of its own.
+    return sidebar.place(bufnr)
   end
   if opts.float then
     return open_floating(bufnr)
@@ -216,6 +223,28 @@ function M.auto_refresh(st)
   M.resync(st)
 end
 
+--- Rebuild every open tree buffer from disk, for the case where something
+--- the user deliberately asked for - a branch switch from the git panel -
+--- has just rewritten the working tree. Unlike `auto_refresh` this ignores
+--- the `auto_refresh` setting (the user asked for the checkout, so they
+--- expect the tree to follow) but it still refuses to throw work away:
+--- a buffer with unsaved edits is only marked stale, for `:w`/`R` to catch
+--- up on, exactly as a watcher-driven refresh would leave it.
+function M.refresh_all_trees()
+  if vim.fn.mode() ~= "n" or vim.fn.getcmdwintype() ~= "" then
+    return
+  end
+  for bufnr, st in pairs(state.buffers) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      if vim.bo[bufnr].modified then
+        st.stale = true
+      else
+        M.resync(st)
+      end
+    end
+  end
+end
+
 local function do_save(st)
   local ops, errors = diff.compute(st)
   if not ops then
@@ -251,24 +280,55 @@ local function do_save(st)
   end
 end
 
-local function show_help(st)
-  local km = config.options.keymaps
-  local lines = {
-    "neiltree",
-    "",
-    km.select .. "  open file / toggle directory",
-    km.expand .. "  expand directory",
-    km.collapse .. "  collapse directory / go to parent (or up a dir, at the top)",
-    km.parent_dir .. "  jump to parent line, or up a dir if already at the top",
-    km.cut .. "  cut (queue for move); also works in visual mode",
-    km.paste .. "  paste: move cut item(s) into dir under cursor",
-    km.refresh .. "  refresh from disk (discards unsaved edits)",
-    ":w  save: create/rename/move/delete files to match the buffer",
-    km.close .. " / <C-c>  close",
-  }
+--- Preserve normal `dd` everywhere except for the one ambiguous tree edit
+--- that cannot be left half-done: deleting an expanded directory's own
+--- line while its descendants remain visible. In that case, remove the
+--- rest of its visible subtree too and immediately run the normal save
+--- flow. The existing confirmation therefore shows the recursive delete,
+--- and a successful apply finishes with `resync()` as usual.
+local function delete_lines(st)
+  local row0 = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local line_count = vim.api.nvim_buf_line_count(st.bufnr)
+  local row1 = math.min(row0 + vim.v.count1 - 1, line_count - 1)
+  local nodes = actions.nodes_in_range(st, row0, row1)
+  local lines = vim.api.nvim_buf_get_lines(st.bufnr, 0, -1, false)
+  local delete_to = row1
+  local has_expanded = false
+
+  -- Extend the normal counted line-delete through each selected expanded
+  -- directory's contiguous, indented block. Reading the buffer indentation
+  -- (instead of only walking known nodes) also removes a newly typed child
+  -- line that has not received an identity extmark yet.
+  for _, node in ipairs(nodes) do
+    if node.type == "directory" and node.expanded then
+      has_expanded = true
+      local pos = vim.api.nvim_buf_get_extmark_by_id(st.bufnr, st.ns, node.mark_id, {})
+      local scan = pos[1] + 1
+      while scan < line_count do
+        local line = lines[scan + 1]
+        if line:match("%S") and #(line:match("^\t*") or "") <= node.depth then
+          break
+        end
+        delete_to = math.max(delete_to, scan)
+        scan = scan + 1
+      end
+    end
+  end
+
+  vim.cmd("normal! " .. (delete_to - row0 + 1) .. "dd")
+
+  if not has_expanded then
+    return
+  end
+  do_save(st)
+end
+
+--- Show `lines` in a small scratch float anchored at the cursor, dismissed
+--- with `q`/<Esc>. Both this module's help and the git panel's use it.
+function M.lines_float(lines)
   local width = 0
   for _, l in ipairs(lines) do
-    width = math.max(width, #l)
+    width = math.max(width, vim.fn.strdisplaywidth(l))
   end
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -283,6 +343,25 @@ local function show_help(st)
   })
   vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf })
   vim.keymap.set("n", "<Esc>", "<cmd>close<cr>", { buffer = buf })
+end
+
+local function show_help(st)
+  local km = config.options.keymaps
+  local lines = {
+    "neiltree",
+    "",
+    km.select .. "  open file / toggle directory",
+    km.expand .. "  expand directory",
+    km.collapse .. "  collapse directory / go to parent (or up a dir, at the top)",
+    km.parent_dir .. "  jump to parent line, or up a dir if already at the top",
+    km.cut .. "  cut (queue for move); also works in visual mode",
+    km.paste .. "  paste: move cut item(s) into dir under cursor",
+    "dd  delete (expanded directories ask to apply immediately)",
+    km.refresh .. "  refresh from disk (discards unsaved edits)",
+    ":w  save: create/rename/move/delete files to match the buffer",
+    km.close .. " / <C-c>  close",
+  }
+  M.lines_float(lines)
 end
 
 local function setup_keymaps(st)
@@ -354,7 +433,19 @@ local function setup_keymaps(st)
     M.confirm_and_resync(st)
   end, opts)
 
+  vim.keymap.set("n", "dd", function()
+    delete_lines(st)
+  end, opts)
+
   local function do_close()
+    if st.sidebar and vim.api.nvim_get_current_win() == sidebar.get() then
+      -- Close through the slot, so it is forgotten rather than left
+      -- pointing at a dead window for the next toggle to trip over.
+      if not sidebar.close() then
+        vim.notify("[neiltree] save or discard changes before closing", vim.log.levels.WARN)
+      end
+      return
+    end
     if st.float or st.sidebar then
       if not pcall(vim.api.nvim_win_close, 0, false) then
         vim.notify("[neiltree] save or discard changes before closing", vim.log.levels.WARN)
@@ -414,11 +505,17 @@ end
 -- outside this buffer has just plausibly happened - for every neiltree
 -- buffer currently on screen, including a sidebar you weren't focused on.
 local global_group
-local function ensure_global_autocmds()
+function M.ensure_global_autocmds()
   if global_group then
     return
   end
   global_group = vim.api.nvim_create_augroup("neiltree_auto_refresh", { clear = true })
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = global_group,
+    callback = function()
+      M.set_highlights()
+    end,
+  })
   vim.api.nvim_create_autocmd({ "FocusGained", "TermLeave", "ShellCmdPost", "DirChanged" }, {
     group = global_group,
     callback = function()
@@ -473,7 +570,7 @@ local function get_or_create_buffer(path, opts)
   render.full(st)
 
   setup_keymaps(st)
-  ensure_global_autocmds()
+  M.ensure_global_autocmds()
   watch.sync(st)
 
   -- Entering the buffer (or coming back to Neovim with the cursor already
@@ -501,11 +598,7 @@ local function get_or_create_buffer(path, opts)
         watch.detach(st_wiped)
       end
       state.clear(bufnr)
-      for tab, win in pairs(sidebar_wins) do
-        if not vim.api.nvim_win_is_valid(win) then
-          sidebar_wins[tab] = nil
-        end
-      end
+      sidebar.prune()
     end,
   })
   return bufnr, true
@@ -520,7 +613,7 @@ end
 --- split pinned to one edge instead.
 function M.open(path, opts)
   opts = vim.tbl_extend("force", { expand_all = config.options.expand_all, float = false, sidebar = false }, opts or {})
-  set_highlights()
+  M.set_highlights()
   path = util.abspath(path or vim.uv.cwd())
   local parent_win = vim.api.nvim_get_current_win()
 
@@ -552,20 +645,31 @@ function M.go_up(st)
   new_st.parent_win = parent_win
   vim.api.nvim_win_set_buf(0, bufnr)
   if was_sidebar then
-    sidebar_wins[vim.api.nvim_get_current_tabpage()] = vim.api.nvim_get_current_win()
+    sidebar.claim(vim.api.nvim_get_current_win())
   end
 end
 
---- Toggle the sidebar for `path` (default cwd) on the current tabpage:
---- closes it if one is already open here, opens one otherwise. This is
---- the nerdtree/nvim-tree-style entry point - bind a single key to it.
+--- Toggle the file tree in the sidebar on the current tabpage. This is the
+--- nerdtree/nvim-tree-style entry point - bind a single key to it.
+---
+--- Three outcomes, because the sidebar is a shared slot rather than a
+--- tree-only window: showing the tree, this closes it; showing the git
+--- panel, this swaps the tree back in (the two views trade places rather
+--- than stacking); showing anything else - the user `:e`'d over it - the
+--- slot is disowned and a fresh split opened, so their buffer is neither
+--- hijacked nor closed out from under them.
 function M.toggle_sidebar(path, opts)
-  local tab = vim.api.nvim_get_current_tabpage()
-  local win = sidebar_wins[tab]
-  if win and vim.api.nvim_win_is_valid(win) then
-    vim.api.nvim_win_close(win, false)
-    sidebar_wins[tab] = nil
-    return
+  local buf = sidebar.buf()
+  if buf then
+    local ft = vim.bo[buf].filetype
+    if ft == "neiltree" then
+      if not sidebar.close() then
+        vim.notify("[neiltree] save or discard changes before closing", vim.log.levels.WARN)
+      end
+      return
+    elseif ft ~= "neiltreegit" then
+      sidebar.release()
+    end
   end
   M.open(path, vim.tbl_extend("force", opts or {}, { sidebar = true }))
 end

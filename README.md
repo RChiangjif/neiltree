@@ -47,6 +47,11 @@ used side by side:
   window you came from (splitting one off if the sidebar is the only
   window there is) and leaves the sidebar open. Width/side are
   `sidebar_width` / `sidebar_side` in `setup()`.
+- `--git` (`:Neiltree --git`, or `require("neiltree").toggle_git(path)`):
+  the git panel - current branch, working-tree status and the branch
+  lists - in that *same* sidebar window. The tree and the panel trade
+  places rather than stacking, so one key each is enough. See
+  "[Git panel](#git-panel)" below.
 
 | Key           | Action                                                     |
 |---------------|--------------------------------------------------------------|
@@ -56,6 +61,7 @@ used side by side:
 | `-`           | Jump to parent line, or go up (see below)                     |
 | `x`           | Cut (queue for move) - works on a visual line range too      |
 | `p`           | Paste: move cut item(s) into the directory under the cursor  |
+| `dd`          | Delete an entry; expanded directories ask to apply immediately |
 | `R`           | Refresh from disk (asks first if you have unsaved edits) - rarely needed, see auto-refresh |
 | `g?`          | Help                                                          |
 | `q`           | Close (float/sidebar: closes the window; default: back to your previous buffer) |
@@ -96,6 +102,79 @@ you're back in normal mode rather than yanking lines around mid-edit.
 
 Set `auto_refresh = false` in `setup()` for the old manual-only behavior.
 
+## Git panel
+
+`:Neiltree --git` toggles a read-only view of the local repository into the
+sidebar - the same window the file tree uses, so the two swap places instead
+of competing for room. Toggle it off and the tree you displaced comes back;
+toggle the tree on and the panel steps aside.
+
+```
+ main                     ↑2 ↓1     <- HEAD, and how far it has drifted
+ ↳ origin/main                         from its upstream
+
+ ▾ Changes (1)
+ M  lua/neiltree/ui.lua
+
+ ▾ Untracked (1)
+ ?  notes.md
+
+ ▾ Local (3)
+ *  main                     ≡      <- ≡ in sync, ↑ ahead, ↓ behind, ↕ both
+    fix/insert-ctrl-w-eats-…
+ +  wip/panel                       <- checked out in another worktree
+
+ ▸ Remotes (12)
+```
+
+Everything comes from the plain `git` CLI - no network, no GitHub API, no
+`gh`. The two-letter status codes are `git status -s`'s, staged column
+first.
+
+| Key    | Action                                                          |
+|--------|-----------------------------------------------------------------|
+| `<CR>` | on a branch, switch to it; on a file, open it; on a section header, fold/unfold |
+| `l`    | unfold the section under the cursor                              |
+| `h`    | fold it, or jump to the header from a row inside it              |
+| `-`    | jump to the section header                                       |
+| `R`    | re-read from git                                                 |
+| `g?`   | help                                                             |
+| `q`    | close the sidebar                                                |
+
+The keys are the tree's own (`keymaps` in `setup()`), so remapping one
+remaps it in both places.
+
+**Switching branches** runs `git switch`, which needs git 2.23 or newer. A
+clean working tree switches immediately; a dirty one asks first (that's
+`confirm_changes`, the same setting that guards saves). Neither forces
+anything - if git refuses because the switch would overwrite local changes,
+you get git's own message and nothing happens. A branch already checked out
+in another worktree is marked `+` and says so instead of failing. Selecting a
+remote-only branch creates a local branch tracking it, always via the
+fully-qualified `origin/name`, so two remotes owning the same branch name is
+not ambiguous.
+
+Because a branch switch rewrites files under you, a successful one runs
+`:checktime` so buffers you already have open reload, and refreshes every
+open tree. A buffer that is modified *and* changed on disk gets Vim's usual
+"file changed" prompt rather than being quietly resolved either way.
+
+The panel keeps itself current the same way the tree does: it watches the
+git directory (and, in a linked worktree, the shared one where `refs/` really
+lives) plus the repository root, and rescans on the same catch-up triggers -
+entering it, regaining focus, `:!cmd`, leaving a `:terminal`, saving a
+buffer. Those watches are non-recursive, so a file changed deep in the tree
+by another program shows up at the next catch-up rather than instantly;
+`R` always forces it. `auto_refresh = false` turns the automatic half off.
+
+Sections cap at `git.max_rows` rendered rows (200 by default) with a
+selectable `… N more`, so a repository with thousands of branches stays
+usable; the counts in the headers are always the real ones. Remotes start
+folded (`git.remotes_collapsed`).
+
+Outside a repository, `--git` says so and changes nothing - it will not
+replace a file tree you have open with an error.
+
 ## Editing rules
 
 - **Rename**: edit the name in place (`ciw`, `cw`, individual character
@@ -103,11 +182,11 @@ Set `auto_refresh = false` in `setup()` for the old manual-only behavior.
 - **Create a file**: type a new line. A trailing `/` makes it a directory.
   A name with an embedded `/` (e.g. `sub/new.txt`) creates the
   intermediate directory too.
-- **Delete**: delete the line (`dd`). Deleting a directory's line deletes
-  it and everything inside it recursively - if the directory is expanded
-  and some of its contents are still visible in the buffer below it,
-  neiltree refuses to save and asks you to delete or move those out
-  first, rather than guessing what you meant.
+- **Delete**: delete the line (`dd`). On an expanded directory, `dd` also
+  removes its visible descendants from the buffer and immediately opens the
+  usual save confirmation; confirming recursively deletes it from disk and
+  refreshes the tree. Files and collapsed directories remain ordinary
+  pending edits until `:w`.
 - **Reparent by dedent/indent**: changing a line's indentation to attach
   it under a *different* nearby directory (one already positioned
   correctly above it) is honored on save, as a rename.
