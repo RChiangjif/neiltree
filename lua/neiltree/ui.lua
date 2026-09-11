@@ -46,6 +46,23 @@ function M.set_highlights()
   link("NeiltreeGitConflict", "DiagnosticError")
   link("NeiltreeGitHint", "Comment")
   link("NeiltreeGitError", "ErrorMsg")
+
+  -- Commit graph. The lane colors are cycled by lane index, so they only
+  -- have to be tellable apart from each other - these are the standard
+  -- syntax groups every colorscheme gives a distinct color.
+  link("NeiltreeGitLane1", "Function")
+  link("NeiltreeGitLane2", "String")
+  link("NeiltreeGitLane3", "Constant")
+  link("NeiltreeGitLane4", "Identifier")
+  link("NeiltreeGitLane5", "Type")
+  link("NeiltreeGitLane6", "Statement")
+  link("NeiltreeGitSubject", "Normal")
+  link("NeiltreeGitAuthor", "Comment")
+  link("NeiltreeGitDate", "Comment")
+  link("NeiltreeGitSha", "Comment")
+  link("NeiltreeGitTag", "Type")
+  link("NeiltreeGitRefLocal", "Identifier")
+  link("NeiltreeGitRefHead", "Special")
 end
 
 local function buf_name(path)

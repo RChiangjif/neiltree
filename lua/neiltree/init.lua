@@ -34,4 +34,14 @@ function M.toggle_git(path, opts)
   require("neiltree.gitpanel").toggle(path, opts)
 end
 
+--- Open the commit graph for `path` (default: the same repo `toggle_git`
+--- would pick) in a centered float: the commit DAG drawn one row per commit,
+--- with branch and tag names as inline badges. Select a commit carrying a
+--- branch to switch to it. A float rather than the sidebar because a graph
+--- needs horizontal room - lanes, refs, subject, author, date and hash do
+--- not fit in a 30-column split.
+function M.open_graph(path, opts)
+  require("neiltree.graphview").open(path, opts)
+end
+
 return M

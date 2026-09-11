@@ -290,6 +290,93 @@ function M.collect(repo, cb)
   end)
 end
 
+-- One NUL-terminated record per commit, tab-separated within. `-z` is what
+-- lets the subject be taken verbatim: it is the only field that can contain
+-- anything, and without `-z` a commit subject is only newline-safe by
+-- convention.
+local LOG_FORMAT = table.concat({
+  "%H", -- full hash, so parents can be matched exactly
+  "%P", -- parent hashes, space separated; empty for a root commit
+  "%an",
+  "%ar",
+  "%D", -- ref names decorating this commit ("HEAD -> main, origin/main")
+  "%s",
+}, "%x09")
+
+--- Split a `%D` field into refs. `opts.remotes` is the set of real remote
+--- names, without which `origin/x` and a local branch literally called
+--- `origin/x` are indistinguishable - `%D` prints both the same way.
+local function parse_decoration(field, remotes)
+  local refs = {}
+  for _, part in ipairs(vim.split(field, ", ", { plain = true })) do
+    if part ~= "" then
+      local head_target = part:match("^HEAD %-> (.+)$")
+      local tag = part:match("^tag: (.+)$")
+      local remote = part:match("^([^/]+)/")
+      if head_target then
+        table.insert(refs, { kind = "local", name = head_target, head = true })
+      elseif part == "HEAD" then
+        table.insert(refs, { kind = "head", name = "HEAD" })
+      elseif tag then
+        table.insert(refs, { kind = "tag", name = tag })
+      elseif remote and remotes[remote] then
+        table.insert(refs, { kind = "remote", name = part, remote = remote, branch = part:sub(#remote + 2) })
+      else
+        table.insert(refs, { kind = "local", name = part })
+      end
+    end
+  end
+  return refs
+end
+
+--- Read the commit DAG, newest first. `--topo-order` (which `git log --graph`
+--- also implies) keeps a branch's commits contiguous instead of interleaving
+--- them by date, which is what makes the drawn lanes readable.
+--- @param opts { limit: integer|nil, remotes: table|nil }
+--- @param cb fun(commits: table[]|nil, err: string|nil)
+function M.log(repo, opts, cb)
+  local remotes = opts.remotes or {}
+  run(repo.root, {
+    "--no-optional-locks",
+    "log",
+    "--all",
+    "--topo-order",
+    "-z",
+    "--format=" .. LOG_FORMAT,
+    "--max-count=" .. (opts.limit or 500),
+  }, function(ok, out, stderr)
+    if not ok then
+      -- A repository with no commits has nothing to log and says so on
+      -- stderr; that is an empty graph, not a failure.
+      if (stderr or ""):find("does not have any commits yet", 1, true) then
+        cb({})
+        return
+      end
+      cb(nil, fail_message(stderr, "git log failed"))
+      return
+    end
+    local commits = {}
+    for _, rec in ipairs(vim.split(out, "\0", { plain = true })) do
+      if rec ~= "" then
+        local f = vim.split(rec, "\t", { plain = true })
+        local parents = {}
+        for hash in (f[2] or ""):gmatch("%S+") do
+          table.insert(parents, hash)
+        end
+        table.insert(commits, {
+          hash = f[1],
+          parents = parents,
+          author = f[3] or "",
+          when = f[4] or "",
+          refs = parse_decoration(f[5] or "", remotes),
+          subject = f[6] or "",
+        })
+      end
+    end
+    cb(commits)
+  end)
+end
+
 --- Switch branches. `spec.ref` is always fully qualified for a remote
 --- (`origin/foo`, with `track`), never the bare branch name: `git switch foo`
 --- is ambiguous the moment two remotes both have a `foo`, whereas

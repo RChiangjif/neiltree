@@ -31,6 +31,9 @@ M.defaults = {
     -- with thousands of branches (or a just-deleted node_modules) from
     -- turning every background refresh into a stall.
     max_rows = 200,
+    -- how many commits `--graph` reads. The graph is a window onto history,
+    -- not all of it; the last row offers to double this on demand.
+    graph_limit = 500,
   },
   -- extensions opened with the OS's default application instead of as a
   -- text buffer (set an entry to `false` in setup() to remove it, or add

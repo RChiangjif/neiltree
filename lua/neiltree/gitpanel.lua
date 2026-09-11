@@ -2,6 +2,8 @@ local config = require("neiltree.config")
 local git = require("neiltree.git")
 local sidebar = require("neiltree.sidebar")
 local util = require("neiltree.util")
+local line = require("neiltree.line")
+local checkout = require("neiltree.checkout")
 
 local M = {}
 
@@ -20,78 +22,7 @@ M._panels = panels
 
 local ns = vim.api.nvim_create_namespace("neiltree_git")
 
-local NERD = { open = "▾", closed = "▸", up = "↑", down = "↓", sync = "≡", diverged = "↕", arrow = "↳", ellipsis = "…" }
-local ASCII = { open = "v", closed = ">", up = "+", down = "-", sync = "=", diverged = "~", arrow = "->", ellipsis = "..." }
-
---- Reuses the existing `icons` option rather than adding a second one: a
---- terminal without a Nerd Font has the same problem with both.
-local function sym()
-  return config.options.icons and NERD or ASCII
-end
-
 -- ---------------------------------------------------------------- rendering
-
---- A line under construction: its text so far, plus the highlight spans
---- accumulated as byte offsets. Building lines out of `put` segments is what
---- keeps `col`/`end_col` correct for free across multi-byte glyphs, which a
---- multi-column panel full of arrows and chevrons is otherwise easy to get
---- subtly wrong.
-local function newline()
-  return { text = "", marks = {} }
-end
-
-local function put(l, text, hl)
-  if text ~= "" then
-    if hl then
-      table.insert(l.marks, { col = #l.text, end_col = #l.text + #text, hl = hl })
-    end
-    l.text = l.text .. text
-  end
-  return l
-end
-
---- Pad `l` so a `tail_cells`-wide tail lands flush against `width`.
-local function pad_to(l, width, tail_cells)
-  local gap = width - vim.fn.strdisplaywidth(l.text) - tail_cells
-  return put(l, string.rep(" ", math.max(gap, 1)))
-end
-
---- Shrink `s` to at most `cells` *display columns*. `mode` "tail" keeps the
---- start and marks the cut at the end - right for branch names, whose
---- prefixes (`fix/`, `feat/`, `user/`) are how you scan a list. "head" keeps
---- the end - right for paths, where the basename is the discriminator.
---- Display-cell rather than byte arithmetic, since branch names and paths
---- are routinely non-ASCII.
-local function truncate(s, cells, mode)
-  if cells <= 0 then
-    return ""
-  end
-  if vim.fn.strdisplaywidth(s) <= cells then
-    return s
-  end
-  local mark = sym().ellipsis
-  local budget = cells - vim.fn.strdisplaywidth(mark)
-  if budget <= 0 then
-    return ""
-  end
-  local n = vim.fn.strchars(s)
-  if mode == "head" then
-    for i = 1, n do
-      local part = vim.fn.strcharpart(s, i)
-      if vim.fn.strdisplaywidth(part) <= budget then
-        return mark .. part
-      end
-    end
-    return mark
-  end
-  for len = n, 1, -1 do
-    local part = vim.fn.strcharpart(s, 0, len)
-    if vim.fn.strdisplaywidth(part) <= budget then
-      return part .. mark
-    end
-  end
-  return mark
-end
 
 --- Render against the window's real width, not `sidebar_width`: a sidebar
 --- the user dragged wider should use the room.
@@ -104,7 +35,7 @@ local function panel_width(panel)
 end
 
 local function track_glyph(track)
-  local S = sym()
+  local S = line.sym()
   if track == ">" then
     return S.up, "NeiltreeGitAhead"
   elseif track == "<" then
@@ -193,7 +124,7 @@ local function render(panel)
   if not vim.api.nvim_buf_is_valid(panel.bufnr) then
     return
   end
-  local S = sym()
+  local S = line.sym()
   local width = panel_width(panel)
   local saved = save_views(panel)
   local lines, marks, rows = {}, {}, {}
@@ -209,15 +140,15 @@ local function render(panel)
   end
 
   local function hint(text)
-    emit(put(newline(), text, "NeiltreeGitHint"))
+    emit(line.put(line.new(), text, "NeiltreeGitHint"))
   end
 
   if panel.busy then
-    emit(put(newline(), " " .. S.ellipsis .. " " .. truncate(panel.busy, width - 3, "tail"), "NeiltreeGitHint"))
+    emit(line.put(line.new(), " " .. S.ellipsis .. " " .. line.truncate(panel.busy, width - 3, "tail"), "NeiltreeGitHint"))
   end
 
   if panel.err then
-    emit(put(newline(), " " .. truncate(panel.err, width - 1, "tail"), "NeiltreeGitError"))
+    emit(line.put(line.new(), " " .. line.truncate(panel.err, width - 1, "tail"), "NeiltreeGitError"))
     hint(" press " .. config.options.keymaps.refresh .. " to retry")
   elseif not panel.data then
     hint(" " .. S.ellipsis .. " loading")
@@ -226,11 +157,11 @@ local function render(panel)
 
     -- Head block.
     if d.bare then
-      emit(put(newline(), " (bare repository)", "NeiltreeGitDetached"))
+      emit(line.put(line.new(), " (bare repository)", "NeiltreeGitDetached"))
     elseif h.detached then
-      emit(put(newline(), " HEAD detached at " .. (h.oid or "?"), "NeiltreeGitDetached"))
+      emit(line.put(line.new(), " HEAD detached at " .. (h.oid or "?"), "NeiltreeGitDetached"))
     else
-      local l = newline()
+      local l = line.new()
       local ahead = (h.ahead or 0) > 0 and (S.up .. h.ahead) or nil
       local behind = (h.behind or 0) > 0 and (S.down .. h.behind) or nil
       local tail = table.concat(vim.tbl_filter(function(x)
@@ -238,32 +169,32 @@ local function render(panel)
       end, { ahead, behind }), " ")
       local tail_cells = tail ~= "" and vim.fn.strdisplaywidth(tail) or 0
       local suffix = h.unborn and " (no commits yet)" or ""
-      put(l, " ")
-      put(l, truncate(h.branch or "?", width - 1 - #suffix - (tail_cells > 0 and tail_cells + 1 or 0), "tail"), "NeiltreeGitHead")
-      put(l, suffix, "NeiltreeGitHint")
+      line.put(l, " ")
+      line.put(l, line.truncate(h.branch or "?", width - 1 - #suffix - (tail_cells > 0 and tail_cells + 1 or 0), "tail"), "NeiltreeGitHead")
+      line.put(l, suffix, "NeiltreeGitHint")
       if tail ~= "" then
-        pad_to(l, width, tail_cells)
+        line.pad_to(l, width, tail_cells)
         if ahead then
-          put(l, ahead, "NeiltreeGitAhead")
+          line.put(l, ahead, "NeiltreeGitAhead")
         end
         if ahead and behind then
-          put(l, " ")
+          line.put(l, " ")
         end
         if behind then
-          put(l, behind, "NeiltreeGitBehind")
+          line.put(l, behind, "NeiltreeGitBehind")
         end
       end
       emit(l)
 
       if not h.unborn then
-        local u = put(newline(), " " .. S.arrow .. " ", "NeiltreeGitUpstream")
+        local u = line.put(line.new(), " " .. S.arrow .. " ", "NeiltreeGitUpstream")
         if h.upstream then
-          put(u, truncate(h.upstream, width - 3 - vim.fn.strdisplaywidth(S.arrow), "tail"), "NeiltreeGitUpstream")
+          line.put(u, line.truncate(h.upstream, width - 3 - vim.fn.strdisplaywidth(S.arrow), "tail"), "NeiltreeGitUpstream")
           if h.upstream_gone then
-            put(u, " (gone)", "NeiltreeGitBehind")
+            line.put(u, " (gone)", "NeiltreeGitBehind")
           end
         else
-          put(u, "(no upstream)", "NeiltreeGitHint")
+          line.put(u, "(no upstream)", "NeiltreeGitHint")
         end
         emit(u)
       end
@@ -271,14 +202,14 @@ local function render(panel)
 
     local cap = git.max_rows()
     for _, sec in ipairs(sections(panel)) do
-      emit(newline())
+      emit(line.new())
 
-      local head = newline()
-      put(head, " ")
-      put(head, panel.collapsed[sec.id] and S.closed or S.open, "NeiltreeGitChevron")
-      put(head, " ")
-      put(head, sec.label, "NeiltreeGitSection")
-      put(head, (" (%d)"):format(#sec.items), "NeiltreeGitCount")
+      local head = line.new()
+      line.put(head, " ")
+      line.put(head, panel.collapsed[sec.id] and S.closed or S.open, "NeiltreeGitChevron")
+      line.put(head, " ")
+      line.put(head, sec.label, "NeiltreeGitSection")
+      line.put(head, (" (%d)"):format(#sec.items), "NeiltreeGitCount")
       emit(head, { kind = "section", id = sec.id })
 
       if not panel.collapsed[sec.id] then
@@ -288,13 +219,13 @@ local function render(panel)
           local shown = panel.show_all[sec.id] and #sec.items or math.min(#sec.items, cap)
           for i = 1, shown do
             local it = sec.items[i]
-            local l = newline()
+            local l = line.new()
             if sec.kind == "file" then
               -- `D` deserves its own color in whichever bucket it lands in.
               local hl = it.code == "D" and "NeiltreeGitDeleted" or sec.hl
-              put(l, " ")
-              put(l, it.code .. string.rep(" ", math.max(1, 3 - #it.code)), hl)
-              put(l, truncate(it.path, width - 4, "head"), hl)
+              line.put(l, " ")
+              line.put(l, it.code .. string.rep(" ", math.max(1, 3 - #it.code)), hl)
+              line.put(l, line.truncate(it.path, width - 4, "head"), hl)
               emit(l, { kind = "file", path = it.path, section = sec.id })
             else
               local marker, hl = " ", "NeiltreeGitBranch"
@@ -308,20 +239,20 @@ local function render(panel)
               end
               local glyph, glyph_hl = track_glyph(it.track)
               local glyph_cells = glyph ~= "" and vim.fn.strdisplaywidth(glyph) or 0
-              put(l, " ")
-              put(l, marker, hl)
-              put(l, "  ")
-              put(l, truncate(it.name, width - 4 - (glyph_cells > 0 and glyph_cells + 1 or 0), "tail"), hl)
+              line.put(l, " ")
+              line.put(l, marker, hl)
+              line.put(l, "  ")
+              line.put(l, line.truncate(it.name, width - 4 - (glyph_cells > 0 and glyph_cells + 1 or 0), "tail"), hl)
               if glyph ~= "" then
-                pad_to(l, width, glyph_cells)
-                put(l, glyph, glyph_hl)
+                line.pad_to(l, width, glyph_cells)
+                line.put(l, glyph, glyph_hl)
               end
               emit(l, { kind = sec.kind, name = it.name, item = it, section = sec.id })
             end
           end
           if shown < #sec.items then
             emit(
-              put(newline(), ("    %s %d more"):format(S.ellipsis, #sec.items - shown), "NeiltreeGitHint"),
+              line.put(line.new(), ("    %s %d more"):format(S.ellipsis, #sec.items - shown), "NeiltreeGitHint"),
               { kind = "more", id = sec.id, section = sec.id }
             )
           end
@@ -528,8 +459,9 @@ local function open_file(panel, path)
   vim.cmd("edit " .. vim.fn.fnameescape(full))
 end
 
---- Work out what `git switch` invocation a branch row means, or nil to do
---- nothing (the caller has already been told why).
+--- Work out what `git switch` a branch row means, or nil when there is
+--- nothing to do (the caller has already been told why). Only the two
+--- view-specific refusals live here; the rest is shared with the graph.
 local function switch_spec(panel, item)
   if item.kind == "branch" then
     if item.item.current then
@@ -543,48 +475,12 @@ local function switch_spec(panel, item)
       )
       return nil
     end
-    return { ref = item.name }, item.name
+    return checkout.spec_for(item.name, nil, panel.data.locals)
   end
-
-  local branch = item.item.branch
-  local existing
-  for _, b in ipairs(panel.data.locals) do
-    if b.name == branch then
-      existing = b
-      break
-    end
-  end
-  if not existing then
-    -- `--track <remote>/<branch>` rather than a bare `git switch <branch>`:
-    -- the bare form is ambiguous the moment two remotes both have a branch
-    -- of that name, the qualified one never is.
-    return { ref = item.name, track = true }, ("%s (tracking %s)"):format(branch, item.name)
-  end
-  if existing.upstream == item.name then
-    return { ref = branch }, branch
-  end
-  local choice = vim.fn.confirm(
-    ("neiltree: local '%s' already exists and tracks %s, not %s."):format(
-      branch,
-      existing.upstream or "nothing",
-      item.name
-    ),
-    ("&Switch to local %s\n&Detach at %s\n&Cancel"):format(branch, item.name),
-    3
-  )
-  if choice == 1 then
-    return { ref = branch }, branch
-  elseif choice == 2 then
-    return { ref = item.name, detach = true }, item.name .. " (detached)"
-  end
-  return nil
+  return checkout.spec_for(item.item.branch, item.name, panel.data.locals)
 end
 
-local function checkout(panel, item)
-  if panel.busy then
-    vim.notify("[neiltree] a git operation is already running", vim.log.levels.WARN)
-    return
-  end
+local function do_checkout(panel, item)
   if panel.data.bare then
     vim.notify("[neiltree] bare repository: there is no working tree to switch", vim.log.levels.WARN)
     return
@@ -596,43 +492,23 @@ local function checkout(panel, item)
   end
 
   local dirty = #panel.data.staged + #panel.data.unstaged + #panel.data.conflicts
-  if config.options.confirm_changes and dirty > 0 then
-    local from = panel.data.head.branch or ("detached at " .. (panel.data.head.oid or "?"))
-    local msg = ("neiltree: switch from %s to %s?\n\n  %d file(s) have local changes - git will carry them\n  over, or refuse the switch."):format(
-      from,
-      label,
-      dirty
-    )
-    if vim.fn.confirm(msg, "&Yes\n&No", 2) ~= 1 then
-      vim.notify("[neiltree] switch cancelled", vim.log.levels.WARN)
-      return
-    end
-  end
-
-  -- Async, like every other subprocess here. The cursor and the focused
-  -- window deliberately stay where they are; the busy line shifts every row
-  -- down by one, which the key-based cursor restore absorbs.
-  panel.busy = "switching to " .. label
-  render(panel)
-
-  git.switch(panel.repo, spec, function(ok, stderr)
+  local started = checkout.switch(panel.repo, spec, label, dirty, function()
     if not vim.api.nvim_buf_is_valid(panel.bufnr) then
       return
     end
     panel.busy = nil
-    if ok then
-      vim.notify(("[neiltree] switched to %s"):format(label), vim.log.levels.INFO)
-      -- The working tree just changed under every open buffer and every open
-      -- tree. Nothing else does this, and without it you go on editing
-      -- content from the branch you left.
-      pcall(vim.cmd, "checktime")
-      require("neiltree.ui").refresh_all_trees()
-    else
-      local msg = vim.trim(stderr or "")
-      vim.notify("[neiltree] " .. (msg ~= "" and msg or "git switch failed"), vim.log.levels.ERROR)
-    end
     M.refresh(panel)
   end)
+
+  -- Only paint the in-progress line once it is genuinely in progress: a
+  -- declined confirmation must not leave "switching to..." stuck on screen.
+  -- The cursor and the focused window deliberately stay where they are; the
+  -- busy line shifts every row down by one, which the key-based cursor
+  -- restore absorbs.
+  if started then
+    panel.busy = "switching to " .. label
+    render(panel)
+  end
 end
 
 local function show_help()
@@ -668,7 +544,7 @@ local function setup_keymaps(panel)
     elseif item.kind == "file" then
       open_file(panel, item.path)
     else
-      checkout(panel, item)
+      do_checkout(panel, item)
     end
   end, opts)
 
@@ -832,10 +708,11 @@ local function get_or_create(root)
   return panel
 end
 
---- Which directory `--git` with no argument means. Prefers whatever the
---- sidebar is already rooted at, so `--sidebar ~/proj/foo` followed by
---- `--git` shows *that* repo rather than cwd's.
-local function default_dir()
+--- Which directory a no-argument `--git` / `--graph` means. Prefers whatever
+--- the sidebar is already rooted at, so `--sidebar ~/proj/foo` followed by
+--- either of them shows *that* repo rather than cwd's. Shared with the
+--- commit graph so the two agree on which repo you meant.
+function M.default_dir()
   local state = require("neiltree.state")
   local slot = sidebar.buf()
   local st = slot and state.get(slot)
@@ -874,7 +751,7 @@ function M.toggle(path, opts)
   ui.set_highlights()
   ui.ensure_global_autocmds()
 
-  local dir = path and util.abspath(path) or default_dir()
+  local dir = path and util.abspath(path) or M.default_dir()
 
   -- Showing a panel whose repo already contains `dir`? Then this press is
   -- the toggle-off half of the gesture. Decided from the paths alone, so

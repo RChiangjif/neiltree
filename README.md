@@ -52,6 +52,9 @@ used side by side:
   lists - in that *same* sidebar window. The tree and the panel trade
   places rather than stacking, so one key each is enough. See
   "[Git panel](#git-panel)" below.
+- `--graph` (`:Neiltree --graph`, or `require("neiltree").open_graph(path)`):
+  the commit graph, in a centered float. See
+  "[Commit graph](#commit-graph)" below.
 
 | Key           | Action                                                     |
 |---------------|--------------------------------------------------------------|
@@ -174,6 +177,57 @@ folded (`git.remotes_collapsed`).
 
 Outside a repository, `--git` says so and changes nothing - it will not
 replace a file tree you have open with an error.
+
+## Commit graph
+
+`:Neiltree --graph` draws the commit DAG - dots for commits, lines for the
+relationships between them - the way VS Code's graph does, with branch and
+tag names as inline badges.
+
+```
+ ●   main v1.0 origin/main  release prep        ray    2h   d80f5af3
+ ●╮  Merge branch 'fix/watcher'                 ray    2h   6b7bddc6
+ │●  fix/watcher  watch git dir                 ray    3h   87a66d76
+ ●│  tidy up                                    ray    3h   cc87322b
+ ●┼╮ Merge branch 'feature/panel'               ray    4h   a2d1a398
+ ││● feature/panel  panel render                ray    4h   cd2398aa
+ ││● panel skeleton                             ray    4h   f377cd4e
+ ●╯│ fix indent bug                             ray    5h   fcf4b8a1
+ ●─╯ add parser                                 ray    6h   66ba0d33
+```
+
+**Exactly one row per commit.** This is not `git log --graph`, which spends
+extra rows on edge transitions (the `|\` and `|/` lines) - there, a row is
+often not a commit at all, so a cursor cannot be mapped back to one. Here
+every row is a commit you can select, and edges turn within that same row.
+Lanes are colored by column so parallel branches stay tellable apart.
+
+A **float rather than the sidebar**, because a graph is mostly horizontal:
+lanes, refs, subject, author, age and hash do not fit in a 30-column split,
+and dropping any of them is what makes a narrow graph useless. The sidebar
+panel is unchanged and the two are independent - you can have both open.
+As the window narrows the author column goes first, then the age; the graph
+and the subject are always kept.
+
+| Key           | Action                                          |
+|---------------|-------------------------------------------------|
+| `<CR>`        | switch to the branch on this commit             |
+| `R`           | re-read from git                                |
+| `q` / `<Esc>` | close                                           |
+| `g?`          | help                                            |
+
+`<CR>` switches branches through the same path as the panel, so the same
+confirmations and the same `:checktime` reload apply. A commit with no
+branch on it says so rather than detaching. A commit carrying several
+branches asks which - except that a local branch and its own
+remote-tracking ref sitting together (`main` and `origin/main`, much the
+commonest case) count as one destination, not two.
+
+Reads `git.graph_limit` commits (500 by default) across all refs; the last
+row offers to double that. Ages are compacted to `17m` / `3d` / `2y` -
+git's own relative dates are the most readable form for browsing history
+and the least predictable width, and the column that buys back goes to the
+commit subject.
 
 ## Editing rules
 
