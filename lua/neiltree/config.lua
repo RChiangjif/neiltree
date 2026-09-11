@@ -2,7 +2,7 @@ local M = {}
 
 M.defaults = {
   -- show dotfiles by default
-  show_hidden = false,
+  show_hidden = true,
   -- recursively expand every directory when opening a tree
   expand_all = false,
   -- render nvim-web-devicons (if installed) / simple fallback icons
