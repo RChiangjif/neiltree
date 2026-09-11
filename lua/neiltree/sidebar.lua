@@ -127,7 +127,15 @@ function M.leave_to_edit_win()
   local from = vim.api.nvim_get_current_win()
   vim.cmd("wincmd p")
   if vim.api.nvim_get_current_win() == from then
-    vim.cmd("vsplit")
+    -- The editor window was closed and left the sidebar as the tab's only
+    -- window. At that point Neovim necessarily stretches it to the full
+    -- screen; a plain :vsplit would then leave that stretched window at
+    -- roughly half the screen (and, depending on 'splitright', may also put
+    -- it on the wrong side). Create the replacement editor opposite the
+    -- configured sidebar edge, then restore the sidebar's fixed width.
+    local edge = config.options.sidebar_side == "right" and "topleft" or "botright"
+    vim.cmd(edge .. " vsplit")
+    vim.api.nvim_win_set_width(from, config.options.sidebar_width)
   end
 end
 
