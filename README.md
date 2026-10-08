@@ -60,7 +60,7 @@ used side by side:
 |---------------|--------------------------------------------------------------|
 | `<CR>`        | Open file under cursor, or expand/collapse directory        |
 | `l`           | Expand directory under cursor                                |
-| `h`           | Collapse directory under cursor, or go up (see below)         |
+| `h`           | Collapse directory under cursor                               |
 | `-`           | Jump to parent line, or go up (see below)                     |
 | `x`           | Cut (queue for move) - works on a visual line range too      |
 | `p`           | Paste: move cut item(s) into the directory under the cursor  |
@@ -71,9 +71,9 @@ used side by side:
 | `<C-c>`/`<Esc>` | Quick-dismiss, **float only** - a sidebar is meant to stay put (nvim-tree-style), so these don't close it; use `q` or toggle it again |
 | `:w`          | Apply pending create/rename/delete edits to disk             |
 
-**Going up a directory**: `h`/`-` jump to the parent *line* when the entry
+**Going up a directory**: `-` jumps to the parent *line* when the entry
 under the cursor has one visible in the tree. On a top-level entry (or
-with nothing under the cursor) they instead re-root the whole buffer one
+with nothing under the cursor) it instead re-roots the whole buffer one
 directory up - like oil.nvim's `-` - in the same window and the same
 placement mode (float stays float, sidebar stays sidebar).
 
@@ -138,7 +138,7 @@ first.
 |--------|-----------------------------------------------------------------|
 | `<CR>` | on a branch, switch to it; on a file, open it; on a section header, fold/unfold |
 | `l`    | unfold the section under the cursor                              |
-| `h`    | fold it, or jump to the header from a row inside it              |
+| `h`    | fold the section under the cursor                                |
 | `-`    | jump to the section header                                       |
 | `R`    | re-read from git                                                 |
 | `g?`   | help                                                             |

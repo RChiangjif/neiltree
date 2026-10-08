@@ -518,7 +518,7 @@ local function show_help()
     "",
     km.select .. "  switch branch / open file / fold section",
     km.expand .. "  unfold the section under the cursor",
-    km.collapse .. "  fold the section, or jump to its header",
+    km.collapse .. "  fold the section",
     km.parent_dir .. "  jump to the section header",
     km.refresh .. "  re-read from git",
     km.close .. "  close the sidebar",
@@ -562,8 +562,6 @@ local function setup_keymaps(panel)
     end
     if item.kind == "section" then
       set_collapsed(panel, item.id, true)
-    elseif item.section then
-      goto_section(panel, item.section)
     end
   end, opts)
 

@@ -369,7 +369,7 @@ local function show_help(st)
     "",
     km.select .. "  open file / toggle directory",
     km.expand .. "  expand directory",
-    km.collapse .. "  collapse directory / go to parent (or up a dir, at the top)",
+    km.collapse .. "  collapse directory",
     km.parent_dir .. "  jump to parent line, or up a dir if already at the top",
     km.cut .. "  cut (queue for move); also works in visual mode",
     km.paste .. "  paste: move cut item(s) into dir under cursor",
@@ -402,14 +402,8 @@ local function setup_keymaps(st)
 
   vim.keymap.set("n", km.collapse, function()
     local node = actions.node_at_cursor(st)
-    if not node then
-      M.go_up(st)
-      return
-    end
-    if node.type == "directory" and node.expanded then
+    if node and node.type == "directory" and node.expanded then
       actions.collapse(st, node)
-    elseif not actions.goto_parent(st, node) then
-      M.go_up(st)
     end
   end, opts)
 
