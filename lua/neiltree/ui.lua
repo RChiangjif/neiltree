@@ -660,6 +660,90 @@ function M.go_up(st)
   end
 end
 
+local function relative_file(root, path)
+  local prefix = util.joinpath(root, "")
+  if path:sub(1, #prefix) == prefix then
+    return path:sub(#prefix + 1)
+  end
+end
+
+--- Locate the current file in the shared sidebar. Keep an existing root
+--- when it contains the file; otherwise use cwd, or the file's directory
+--- when it is outside cwd. Only the ancestor directories are expanded.
+function M.reveal_current_file()
+  local parent_win = vim.api.nvim_get_current_win()
+  if parent_win == sidebar.get() and (vim.bo.filetype == "neiltree" or vim.bo.filetype == "neiltreegit") then
+    -- A second press while focused on the tree still refers to the file
+    -- in the editor window we came from.
+    parent_win = vim.fn.win_getid(vim.fn.winnr("#"))
+  end
+  local file_buf = vim.api.nvim_win_get_buf(parent_win)
+  local path = vim.api.nvim_buf_get_name(file_buf)
+  if vim.bo[file_buf].buftype ~= "" or path == "" then
+    vim.notify("[neiltree] no current file to reveal", vim.log.levels.WARN)
+    return false
+  end
+  path = util.abspath(path)
+  local stat = vim.uv.fs_stat(path)
+  if not stat or stat.type == "directory" then
+    vim.notify("[neiltree] current file does not exist on disk: " .. path, vim.log.levels.WARN)
+    return false
+  end
+
+  local slot = sidebar.buf()
+  local existing_st = slot and state.get(slot)
+  local root = existing_st and existing_st.root.path
+    or (slot and vim.b[slot].neiltree_git_root)
+  if not root or not relative_file(root, path) then
+    root = util.abspath(vim.uv.cwd())
+    if not relative_file(root, path) then
+      root = vim.fs.dirname(path)
+    end
+  end
+
+  local bufnr = get_or_create_buffer(root, { expand_all = config.options.expand_all })
+  -- Revealing rescans from disk so it can also find newly-created files.
+  -- Refuse to overwrite pending filesystem edits in the tree buffer.
+  if vim.bo[bufnr].modified then
+    vim.notify("[neiltree] save or refresh tree edits before revealing a file", vim.log.levels.WARN)
+    return false
+  end
+  if slot and vim.bo[slot].filetype ~= "neiltree" and vim.bo[slot].filetype ~= "neiltreegit" then
+    sidebar.release()
+  end
+  M.set_highlights()
+  local st = state.get(bufnr)
+  st.float, st.sidebar, st.parent_win = false, true, parent_win
+  local win = sidebar.place(bufnr)
+  if not win then
+    return false
+  end
+  M.resync(st)
+
+  local node = st.root
+  for name in relative_file(root, path):gmatch("[^/]+") do
+    local found
+    for _, child in ipairs(node.children or {}) do
+      if child.name == name then
+        found = child
+        break
+      end
+    end
+    if not found then
+      vim.notify("[neiltree] file is hidden or unavailable in the tree: " .. path, vim.log.levels.WARN)
+      return false
+    end
+    node = found
+    if node.path ~= path then
+      actions.expand(st, node)
+    end
+  end
+  local pos = vim.api.nvim_buf_get_extmark_by_id(bufnr, st.ns, node.mark_id, {})
+  vim.api.nvim_win_set_cursor(win, { pos[1] + 1, node.depth })
+  vim.cmd("normal! zz")
+  return true
+end
+
 --- Toggle the file tree in the sidebar on the current tabpage. This is the
 --- nerdtree/nvim-tree-style entry point - bind a single key to it.
 ---

@@ -47,6 +47,12 @@ used side by side:
   window you came from (splitting one off if the sidebar is the only
   window there is) and leaves the sidebar open. Width/side are
   `sidebar_width` / `sidebar_side` in `setup()`.
+- `--reveal` (`:Neiltree --reveal`, or `require("neiltree").reveal_current_file()`):
+  opens or focuses the sidebar, expands the current file's ancestor
+  directories, and moves the cursor to its row. Keeps the sidebar's root
+  if the file is inside it; otherwise uses cwd, or the file's directory
+  if it is outside cwd. Pending edits in the tree must be saved or refreshed
+  first. Hidden entries still follow `show_hidden`.
 - `--git` (`:Neiltree --git`, or `require("neiltree").toggle_git(path)`):
   the git panel - current branch, working-tree status and the branch
   lists - in that *same* sidebar window. The tree and the panel trade
@@ -55,6 +61,14 @@ used side by side:
 - `--graph` (`:Neiltree --graph`, or `require("neiltree").open_graph(path)`):
   the commit graph, in a centered float. See
   "[Commit graph](#commit-graph)" below.
+
+Bind reveal alongside the sidebar toggle in your Neovim config (with a
+space leader, `<leader>N` is Space then Shift+N):
+
+```lua
+vim.keymap.set("n", "<leader>n", "<cmd>Neiltree --sidebar<cr>", { desc = "Toggle tree sidebar" })
+vim.keymap.set("n", "<leader>N", "<cmd>Neiltree --reveal<cr>", { desc = "Reveal current file in tree" })
+```
 
 | Key           | Action                                                     |
 |---------------|--------------------------------------------------------------|

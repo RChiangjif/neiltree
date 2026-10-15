@@ -23,6 +23,13 @@ function M.toggle_sidebar(path, opts)
   require("neiltree.ui").toggle_sidebar(path, opts)
 end
 
+--- Reveal the current file in the sidebar, opening it if needed. Expands
+--- the file's ancestor directories and focuses its row without toggling
+--- the sidebar closed on repeated calls.
+function M.reveal_current_file()
+  return require("neiltree.ui").reveal_current_file()
+end
+
 --- Toggle the git panel for `path` (default: whatever the sidebar is already
 --- rooted at, else the current file's directory, else cwd) in the same
 --- sidebar slot the file tree uses on this tabpage. Shows the current
